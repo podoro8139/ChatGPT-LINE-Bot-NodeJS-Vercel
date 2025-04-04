@@ -1,46 +1,46 @@
 import express from 'express';
-import {
-  TITLE_AI,
-  TITLE_HUMAN,
-} from '../services/openai.mjs';
-import {
-  messages,
-  chat,
-} from '../engine/index.mjs';
-import {
-  reply,
-} from '../services/line.mjs';
-import config from '../config/index.mjs';
+import { handleEvents, printPrompts } from '../app/index.js';
+import config from '../config/index.js';
+import { validateLineSignature } from '../middleware/index.js';
+import storage from '../storage/index.js';
+import { fetchVersion, getVersion } from '../utils/index.js';
 
 const app = express();
 
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString();
+  },
+}));
 
 app.get('/', (req, res) => {
+  if (config.APP_URL) {
+    res.redirect(config.APP_URL);
+    return;
+  }
   res.sendStatus(200);
 });
 
-app.post('/webhook', async (req, res) => {
-  const events = req.body.events || [];
-  const requests = events
-    .filter(({ type }) => type === 'message')
-    .map(async ({ replyToken, message }) => {
-      messages.push(`${TITLE_HUMAN}: ${message.text}？`);
-      const context = messages.map((m) => `${m}\n`).join('');
-      const { reply: text } = await chat({ context });
-      const payload = {
-        replyToken,
-        messages: [{ type: 'text', text }],
-      };
-      messages.push(`${TITLE_AI}: ${text}`);
-      return config.APP_ENV === 'local' ? payload : reply(payload);
-    });
-  const responses = await Promise.all(requests);
-  res.status(200).send(responses);
+app.get('/info', async (req, res) => {
+  const currentVersion = getVersion();
+  const latestVersion = await fetchVersion();
+  res.status(200).send({ currentVersion, latestVersion });
 });
 
-if (config.APP_ENV === 'local') {
-  app.listen('3000');
+app.post(config.APP_WEBHOOK_PATH, validateLineSignature, async (req, res) => {
+  try {
+    await storage.initialize();
+    await handleEvents(req.body.events);
+    res.sendStatus(200);
+  } catch (err) {
+    console.error(err.message);
+    res.sendStatus(500);
+  }
+  if (config.APP_DEBUG) printPrompts();
+});
+
+if (config.APP_PORT) {
+  app.listen(config.APP_PORT);
 }
 
 export default app;
