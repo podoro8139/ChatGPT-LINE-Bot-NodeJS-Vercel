@@ -2,15 +2,25 @@ import fetch from "node-fetch";
 import { Configuration, OpenAIApi } from "openai";
 
 export default async function handler(req, res) {
+  console.log("🟡 Webhookエンドポイントに到達");
+
   if (req.method !== "POST") {
+    console.log("❌ POSTじゃないリクエストが来ました");
     return res.status(405).end();
   }
 
   const body = req.body;
-  const userMessage = body.events?.[0]?.message?.text || "こんにちは";
+  console.log("📦 body:", JSON.stringify(body));
+
+  const userMessage = body?.events?.[0]?.message?.text || null;
+  const replyToken = body?.events?.[0]?.replyToken;
+
+  if (!userMessage || !replyToken) {
+    console.log("❌ userMessage か replyToken が取得できません");
+    return res.status(400).send("Bad request");
+  }
 
   console.log("📩 受信メッセージ:", userMessage);
-  console.log("📦 replyToken:", body.events?.[0]?.replyToken);
 
   const configuration = new Configuration({
     apiKey: process.env.OPENAI_API_KEY,
@@ -31,22 +41,23 @@ export default async function handler(req, res) {
       Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
     };
 
-    const replyPayload = {
-      replyToken: body.events[0].replyToken,
+    const payload = {
+      replyToken: replyToken,
       messages: [{ type: "text", text: replyText }],
     };
 
-    const lineResponse = await fetch("https://api.line.me/v2/bot/message/reply", {
+    const lineRes = await fetch("https://api.line.me/v2/bot/message/reply", {
       method: "POST",
       headers,
-      body: JSON.stringify(replyPayload),
+      body: JSON.stringify(payload),
     });
 
-    if (!lineResponse.ok) {
-      const errorText = await lineResponse.text();
-      console.error("🚨 LINEへの返信エラー:", errorText);
+    const lineText = await lineRes.text();
+
+    if (!lineRes.ok) {
+      console.log("🚨 LINE返信エラー:", lineText);
     } else {
-      console.log("✅ LINEに返事を送信しました！");
+      console.log("✅ LINEに返事を送りました");
     }
 
     return res.status(200).send("OK");
