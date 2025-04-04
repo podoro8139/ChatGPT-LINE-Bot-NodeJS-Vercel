@@ -1,10 +1,11 @@
 import fetch from "node-fetch";
-import { Configuration, OpenAIApi } from "openai";
 import { buffer } from "micro";
+import { Configuration, OpenAIApi } from "openai";
 
+// LINE Webhook対応：BodyParserを無効化
 export const config = {
   api: {
-    bodyParser: false, // LINE Webhook対応のため無効化
+    bodyParser: false,
   },
 };
 
@@ -17,20 +18,19 @@ export default async function handler(req, res) {
   }
 
   try {
-    const buf = await buffer(req);
-    const bodyText = buf.toString("utf-8");
-    const body = JSON.parse(bodyText);
-    console.log("📩 body:", JSON.stringify(body));
+    const rawBody = await buffer(req);
+    const body = JSON.parse(rawBody.toString());
+    console.log("📦 受信Body:", JSON.stringify(body));
 
     const userMessage = body.events?.[0]?.message?.text || null;
     const replyToken = body.events?.[0]?.replyToken || null;
 
     if (!userMessage || !replyToken) {
-      console.log("❌ userMessageかreplyTokenが取得できません");
+      console.log("❌ userMessage または replyToken が取得できません");
       return res.status(400).send("Bad request");
     }
 
-    console.log("📝 受信メッセージ:", userMessage);
+    console.log("📩 ユーザーのメッセージ:", userMessage);
 
     const configuration = new Configuration({
       apiKey: process.env.OPENAI_API_KEY,
@@ -43,26 +43,34 @@ export default async function handler(req, res) {
     });
 
     const replyText = response.data.choices[0].message.content;
-    console.log("🤖 GPT応答:", replyText);
+    console.log("🤖 GPTの返答:", replyText);
 
     const headers = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
     };
 
-    await fetch("https://api.line.me/v2/bot/message/reply", {
+    const replyPayload = {
+      replyToken: replyToken,
+      messages: [{ type: "text", text: replyText }],
+    };
+
+    const lineResponse = await fetch("https://api.line.me/v2/bot/message/reply", {
       method: "POST",
       headers: headers,
-      body: JSON.stringify({
-        replyToken: replyToken,
-        messages: [{ type: "text", text: replyText }],
-      }),
+      body: JSON.stringify(replyPayload),
     });
 
-    console.log("✅ LINEに返答を送信しました");
+    if (!lineResponse.ok) {
+      const errorDetail = await lineResponse.text();
+      console.log("🚨 LINE返信失敗:", errorDetail);
+    } else {
+      console.log("✅ LINEに返事を送信しました");
+    }
+
     return res.status(200).send("OK");
   } catch (err) {
-    console.error("🚨 エラー発生:", err);
+    console.error("❌ 処理中のエラー:", err);
     return res.status(500).send("Internal Server Error");
   }
 }
